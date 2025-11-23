@@ -58,7 +58,7 @@ def check_teslafi():
         text = cols[0].get_text().strip()
 
         # DEBUG BLOCK
-        target_version = "2025.44.3"
+        target_version = "2025.32.6"
         if target_version in text:
             msg = [f"Debug for {text}:"]
             for i, c in enumerate(cols):
