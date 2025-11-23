@@ -51,28 +51,29 @@ def check_teslafi():
     builds = {}  # version -> pending installs
 
     for row in soup.find_all("tr"):
-    cols = row.find_all("td")
-    if not cols:
-        continue
-    
-    text = cols[0].get_text().strip()
-    
-    if text.startswith("20") and "." in text and len(text) < 25:
-        # skip rows that do not even have a pending column
-        if len(cols) < 4:
+        cols = row.find_all("td")
+        if not cols:
             continue
 
-        try:
-            # Col 3 is the pending installs  your debug showed 3: '44'
-            pending_text = cols[3].get_text().strip().replace(",", "")
-            pending = int(pending_text) if pending_text.isdigit() else 0
-        except Exception as e:
-            print(f"Error parsing columns for version {text}: {e}")
-            pending = 0
-        
-        # only take the first row for each version  ignore later ones
-        if text not in builds:
-            builds[text] = pending
+        text = cols[0].get_text().strip()
+
+        # Valid version row
+        if text.startswith("20") and "." in text and len(text) < 25:
+            # skip rows that do not even have a pending column
+            if len(cols) < 4:
+                continue
+
+            try:
+                # Col 3 is the pending installs (your debug showed 3: '44')
+                pending_text = cols[3].get_text().strip().replace(",", "")
+                pending = int(pending_text) if pending_text.isdigit() else 0
+            except Exception as e:
+                print(f"Error parsing columns for version {text}: {e}")
+                pending = 0
+
+            # only take the first row for each version (ignore later ones)
+            if text not in builds:
+                builds[text] = pending
 
     if not builds:
         print("Could not find any version data. Structure may have changed.")
@@ -101,14 +102,14 @@ def check_teslafi():
         if version not in versions_memory:
             detail_url = f"https://www.teslafi.com/firmware.php?detail={version}"
             msg = (
-                f"**New Build Detected** – `{version}`\n\n"
+                f"**🚨 New Build Detected**: `{version}`\n\n"
                 f"Rollout Count: {pending}\n\n"
                 f"[TeslaFi]({detail_url})"
             )
             send_telegram(msg)
             versions_memory[version] = pending
 
-        # SCENARIO 2: WAVE (Same Version, Big Jump in pending count)
+        # SCENARIO 2: WAVE (Same Version, big jump in pending count)
         elif pending >= last_count + WAVE_THRESHOLD:
             diff = pending - last_count
             detail_url = f"https://www.teslafi.com/firmware.php?detail={version}"
