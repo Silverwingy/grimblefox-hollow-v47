@@ -47,91 +47,85 @@ def check_teslafi():
 
     soup = BeautifulSoup(response.text, "html.parser")
     
-    # --- LOGIC: Find the First Row of the Fleet Table ---
-    latest_version = None
-    current_count = 0  # This will be Pending + Installed
-    
-    # Search for the table row with the latest version
+    # --- LOGIC: Collect all builds in the fleet table ---
+    builds = {}  # version -> pending installs
+
     for row in soup.find_all("tr"):
         cols = row.find_all("td")
-        if not cols: continue
+        if not cols:
+            continue
         
         text = cols[0].get_text().strip()
         
         # Valid version check (Starts with '20' and has a dot, e.g., '2025.44.1')
         if text.startswith("20") and "." in text and len(text) < 25:
-            latest_version = text
-            
-            # --- CRITICAL COLUMN FIX ---
-            # Col 0: Version
-            # Col 1: Current Installs (e.g., 5,295)
-            # Col 2: Percent (e.g., 56.1%)  <-- WE MUST SKIP THIS
-            # Col 3: Pending Installs (e.g., 1,434) <-- TARGET
-            
             try:
-                installed = int(cols[1].get_text().strip().replace(",", "") or 0)
-                # If col[3] is empty or invalid, assume 0
+                # Col 0: Version
+                # Col 1: Current Installs (not used for logic now)
+                # Col 2: Percent (skip)
+                # Col 3: Pending Installs (target)
                 pending_text = cols[3].get_text().strip().replace(",", "")
                 pending = int(pending_text) if pending_text.isdigit() else 0
-                
-                # We sum them so that even if a user moves from "Pending" to "Installed", 
-                # the "Wave Size" remains accurate and doesn't shrink.
-                current_count = installed + pending
             except Exception as e:
-                print(f"Error parsing columns: {e}")
-                current_count = 0
+                print(f"Error parsing columns for version {text}: {e}")
+                pending = 0
             
-            break
+            builds[text] = pending
 
-    if not latest_version:
-        print("Could not find version data. Structure may have changed.")
+    if not builds:
+        print("Could not find any version data. Structure may have changed.")
         return
 
-    # --- COMPARE WITH MEMORY ---
+    # --- COMPARE WITH MEMORY (per version) ---
     memory = load_memory()
-    last_version = memory.get("last_version", "None")
-    last_count = memory.get("last_count", 0)
 
-    print(f"Current: {latest_version} (Count: {current_count})")
-    print(f"Saved:   {last_version} (Count: {last_count})")
+    # Backward compatibility with old schema that used single last_version / last_count
+    versions_memory = memory.get("versions")
+    if versions_memory is None:
+        versions_memory = {}
+        if "last_version" in memory:
+            versions_memory[memory["last_version"]] = memory.get("last_count", 0)
 
-    # --- DECISION TREE ---
+    print("Current pending counts:")
+    for v, p in builds.items():
+        last = versions_memory.get(v, 0)
+        print(f"{v}: {p} (previous {last})")
 
-    # SCENARIO 1: NEW BUILD (Version Changed)
-    if latest_version != last_version:
-        detail_url = f"https://www.teslafi.com/firmware.php?detail={latest_version}"
-        msg = (
-            f"🆕 **New Build** – `{latest_version}`\n\n"
-            f" Initial Rollout to {current_count} on [TeslaFi]({detail_url})"
-        )
-        send_telegram(msg)
-        
-        # Save both new version and new count
-        memory["last_version"] = latest_version
-        memory["last_count"] = current_count
-        save_memory(memory)
+    # --- DECISION TREE PER BUILD ---
+    for version, pending in builds.items():
+        last_count = versions_memory.get(version, 0)
 
-    # SCENARIO 2: WAVE (Same Version, Big Jump in Count)
-    # We check if the total count increased by the threshold (e.g. 5)
-    elif current_count >= last_count + WAVE_THRESHOLD:
-        diff = current_count - last_count
-        detail_url = f"https://www.teslafi.com/firmware.php?detail={latest_version}"
-        msg = (
-            f"A new wave `{latest_version}` is rolling out now.\n\n"
-            f"Rollout Size: {diff}\n\n"
-            f"[TeslaFi]({detail_url})"
-        )
-        send_telegram(msg)
-        
-        # Update the count so we don't alert again until the NEXT wave
-        memory["last_count"] = current_count
-        save_memory(memory)
+        # SCENARIO 1: NEW BUILD (not seen before in memory)
+        if version not in versions_memory:
+            detail_url = f"https://www.teslafi.com/firmware.php?detail={version}"
+            msg = (
+                f"🆕 **New Build** – `{version}`\n\n"
+                f" Initial Rollout pending count: {pending} on [TeslaFi]({detail_url})"
+            )
+            send_telegram(msg)
+            versions_memory[version] = pending
 
-    else:
-        print("No significant change.")
-        # Optional: Save small increments silently to keep memory accurate
-        memory["last_count"] = current_count
-        save_memory(memory)
+        # SCENARIO 2: WAVE (Same Version, Big Jump in pending count)
+        elif pending >= last_count + WAVE_THRESHOLD:
+            diff = pending - last_count
+            detail_url = f"https://www.teslafi.com/firmware.php?detail={version}"
+            msg = (
+                f"A new wave `{version}` is rolling out now.\n\n"
+                f"Rollout Size (pending increase): {diff}\n\n"
+                f"[TeslaFi]({detail_url})"
+            )
+            send_telegram(msg)
+            versions_memory[version] = pending
+
+        else:
+            # Small or no change: just keep memory up to date
+            versions_memory[version] = pending
+
+    # Save updated per-version memory and clean old keys if present
+    memory["versions"] = versions_memory
+    memory.pop("last_version", None)
+    memory.pop("last_count", None)
+    save_memory(memory)
 
 if __name__ == "__main__":
     check_teslafi()
