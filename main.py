@@ -14,7 +14,11 @@ SHOP_URLS = [
     "https://shop.tesla.com/category/lifestyle",
 ]
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36"
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
 }
 MEMORY_FILE = "memory.json"
 WAVE_THRESHOLD = 5  # Trigger alert if new detection size is >= 5
@@ -109,6 +113,56 @@ def save_memory(data):
         json.dump(data, f)
 
 
+def parse_next_data_products(soup):
+    """Extract product info from Tesla Shop Next.js data to avoid JS/anti-bot issues."""
+
+    script = soup.find("script", id="__NEXT_DATA__")
+    if not script or not script.string:
+        return {}
+
+    try:
+        data = json.loads(script.string)
+    except Exception as e:
+        print(f"Failed to parse __NEXT_DATA__: {e}")
+        return {}
+
+    products = {}
+
+    def extract_price(obj):
+        # Prefer any string with a dollar sign; otherwise format numeric price with currency when available.
+        for val in obj.values():
+            if isinstance(val, str) and "$" in val and any(ch.isdigit() for ch in val):
+                return val
+        for key in ("price", "price_low", "price_high", "price_usd"):
+            val = obj.get(key)
+            if isinstance(val, (int, float)) and val > 0:
+                currency = obj.get("currency") or obj.get("currencyCode") or obj.get("currency_code")
+                prefix = f"{currency} " if currency else "$"
+                return f"{prefix}{val:,.2f}" if isinstance(val, float) else f"{prefix}{val}"
+        return ""
+
+    def walk(node):
+        if isinstance(node, dict):
+            if "handle" in node and ("title" in node or "name" in node):
+                pid = str(node.get("handle") or "").strip("/")
+                if pid and pid not in products:
+                    name = node.get("title") or node.get("name") or ""
+                    price = extract_price(node)
+                    products[pid] = {
+                        "name": name,
+                        "price": price,
+                        "url": f"https://shop.tesla.com/product/{pid}",
+                    }
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(data)
+    return products
+
+
 def scrape_tesla_shop_products():
     products = {}  # product_id -> {name, price, url}
 
@@ -123,9 +177,18 @@ def scrape_tesla_shop_products():
 
         soup = BeautifulSoup(r.text, "html.parser")
 
+        # First, try to parse the Next.js bootstrap data to avoid issues with hidden/JS-rendered markup.
+        json_products = parse_next_data_products(soup)
+        if json_products:
+            products.update(json_products)
+
         # look for links to /product/ pages and grab name + nearby price
         for a in soup.select('a[href*="/product/"]'):
-            name = a.get_text(strip=True)
+            # Tesla shop links often store the display name in aria-label,
+            # while the anchor text can be empty because the card is built
+            # with nested elements. Grab aria-label first, then fall back to
+            # any rendered text.
+            name = a.get("aria-label") or a.get_text(strip=True)
             href = a.get("href", "")
 
             if not name or not href:
@@ -147,21 +210,28 @@ def scrape_tesla_shop_products():
 
             price = None
 
-            # first try siblings after the link
-            for sib in a.next_siblings:
-                try:
-                    if isinstance(sib, NavigableString):
-                        text = str(sib).strip()
-                    else:
-                        text = sib.get_text(strip=True)
-                except Exception:
-                    continue
-
-                if not text:
-                    continue
-                if "$" in text and any(ch.isdigit() for ch in text):
-                    price = text
+            # first try to find a price within the link itself (common on Tesla shop)
+            for node in a.stripped_strings:
+                if "$" in node and any(ch.isdigit() for ch in node):
+                    price = node
                     break
+
+            # next try siblings after the link
+            if not price:
+                for sib in a.next_siblings:
+                    try:
+                        if isinstance(sib, NavigableString):
+                            text = str(sib).strip()
+                        else:
+                            text = sib.get_text(strip=True)
+                    except Exception:
+                        continue
+
+                    if not text:
+                        continue
+                    if "$" in text and any(ch.isdigit() for ch in text):
+                        price = text
+                        break
 
             # fallback: scan parent for a price string
             if not price:
