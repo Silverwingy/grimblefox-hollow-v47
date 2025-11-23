@@ -2,28 +2,27 @@ import requests
 from bs4 import BeautifulSoup
 import os
 import json
-import sys
 
 # --- CONFIGURATION ---
 URL = "https://www.teslafi.com/firmware.php"
-# To prevent TeslaFi from blocking us, we look like a real browser
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36"
 }
 MEMORY_FILE = "memory.json"
+WAVE_THRESHOLD = 5  # Trigger "Wave Alert" if installs increase by 5+ in 10 mins
 
-# Secrets from GitHub Environment
+# Secrets
 bot_token = os.environ.get("TELEGRAM_TOKEN")
 chat_id = os.environ.get("CHAT_ID")
 
-def send_telegram_alert(message):
+def send_telegram(message):
     if not bot_token or not chat_id:
-        print("Error: Telegram tokens not found.")
+        print("Error: Missing Telegram tokens.")
         return
-    send_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
     data = {"chat_id": chat_id, "text": message, "parse_mode": "Markdown"}
     try:
-        requests.post(send_url, data=data)
+        requests.post(url, data=data)
     except Exception as e:
         print(f"Failed to send alert: {e}")
 
@@ -48,48 +47,78 @@ def check_teslafi():
 
     soup = BeautifulSoup(response.text, "html.parser")
     
-    # Logic: Find the "Software Version" table. 
-    # TeslaFi structure changes, but usually the first <a> tag with a version number is the latest.
-    # We look for the specific table ID or class usually found on the firmware page.
+    # --- LOGIC: Find the First Row of the Fleet Table ---
+    latest_version = None
+    current_count = 0
     
-    # Attempt to find the main firmware table
-    # Note: Scrapers break if websites change. This looks for the first row of data.
-    versions_found = []
-    
-    # Targeting the main table (often has id 'table' or specific class, simplified approach below)
-    # We search for links that look like firmware versions (e.g., "2024.44")
-    for link in soup.find_all("a"):
-        text = link.get_text().strip()
-        # rudimentary check if it looks like a version number (starts with 202)
-        if text.startswith("202") and "." in text and len(text) < 20:
-            # We found a version candidate
-            versions_found.append(text)
-    
-    if not versions_found:
-        print("No versions found. Website structure might have changed.")
+    # We look for the first table row that has a version number
+    for row in soup.find_all("tr"):
+        cols = row.find_all("td")
+        if not cols: continue
+        
+        text = cols[0].get_text().strip()
+        
+        # Valid version check (Starts with '20' and has a dot, e.g., '2025.44.1')
+        if text.startswith("20") and "." in text and len(text) < 25:
+            latest_version = text
+            
+            # The "Count" is usually in the 2nd column (index 1)
+            try:
+                count_text = cols[1].get_text().strip().replace(",", "")
+                current_count = int(count_text)
+            except:
+                current_count = 0
+            
+            # We found the top row, stop searching
+            break
+
+    if not latest_version:
+        print("Could not find version data. Structure may have changed.")
         return
 
-    # The top one is usually the latest
-    latest_version = versions_found[0]
-    print(f"Latest detected version: {latest_version}")
-
-    # Load previous state
+    # --- COMPARE WITH MEMORY ---
     memory = load_memory()
-    last_known = memory.get("last_version", "None")
+    last_version = memory.get("last_version", "None")
+    last_count = memory.get("last_count", 0)
 
-    # --- DECISION LOGIC ---
-    
-    # 1. NEW VERSION DETECTED
-    if latest_version != last_known:
-        msg = f"🚨 **New Tesla Firmware Detected!**\n\nVersion: `{latest_version}`\nseen on TeslaFi.com"
-        print("New version! Sending alert.")
-        send_telegram_alert(msg)
+    print(f"Current: {latest_version} ({current_count} installs)")
+    print(f"Saved:   {last_version} ({last_count} installs)")
+
+    # --- DECISION TREE ---
+
+    # SCENARIO 1: NEW BUILD (Version Changed)
+ if latest_version != last_version:
+    detail_url = f"https://www.teslafi.com/firmware.php?detail={latest_version}"
+    msg = (
+        f"🆕 **New Build** – `{latest_version}`\n"
+        f" Initial Rollout to {current_count} on [TeslaFi]({detail_url})"
+    )
+    send_telegram(msg)
+
         
-        # Update memory
+        # Save both new version and new count
         memory["last_version"] = latest_version
+        memory["last_count"] = current_count
         save_memory(memory)
+
+    # SCENARIO 2: WAVE (Same Version, Big Jump in Count)
+    elif current_count >= last_count + WAVE_THRESHOLD:
+    diff = current_count - last_count
+    msg = (
+        f"A new wave of `{latest_version}` is rolling out now.\n"
+        f"Initial Rollout Size: {diff}"
+    )
+    send_telegram(msg)
+        
+        # Update the count only
+        memory["last_count"] = current_count
+        save_memory(memory)
+
     else:
-        print(f"No change. Still {last_known}")
+        print("No significant change.")
+        # (Optional) Update count silently so we track small increments?
+        # memory["last_count"] = current_count
+        # save_memory(memory)
 
 if __name__ == "__main__":
     check_teslafi()
