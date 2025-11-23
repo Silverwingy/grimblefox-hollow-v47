@@ -14,6 +14,19 @@ WAVE_THRESHOLD = 5  # Trigger alert if new detection size is >= 5
 # Secrets
 bot_token = os.environ.get("TELEGRAM_TOKEN")
 chat_id = os.environ.get("CHAT_ID")
+SHEET_WEBHOOK_URL = os.environ.get("SHEET_WEBHOOK_URL")
+
+def notify_sheet_new_build(version):
+    if not SHEET_WEBHOOK_URL:
+        return
+    try:
+        requests.post(
+            SHEET_WEBHOOK_URL,
+            json={"version": version},
+            timeout=10,
+        )
+    except Exception as e:
+        print(f"Failed to notify sheet: {e}")
 
 def send_telegram(message):
     if not bot_token or not chat_id:
@@ -107,6 +120,7 @@ def check_teslafi():
                 f"Initial Rollout: {pending}   \u2013 [TeslaFi]({detail_url})"
             )
             send_telegram(msg)
+            notify_sheet_new_build(version)
             versions_memory[version] = pending
 
         # SCENARIO 2: WAVE (Same Version, big jump in pending count)
