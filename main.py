@@ -104,7 +104,7 @@ def check_teslafi():
             msg = (
                 f"🚨 New Build Detected\n\n"
                 f"{version}`\n\n"
-                f"Initial Rollout: {pending}  \u2013 [TeslaFi]({detail_url})"
+                f"Initial Rollout: {pending}   \u2013 [TeslaFi]({detail_url})"
             )
             send_telegram(msg)
             versions_memory[version] = pending
@@ -116,7 +116,7 @@ def check_teslafi():
             msg = (
                 f"🌊 New Wave Rolling Out\n\n"
                 f"{version}`\n\n"
-                f"Rollout Size: {diff}  \u2013 [TeslaFi]({detail_url})"
+                f"Rollout Size: {diff}   \u2013 [TeslaFi]({detail_url})"
             )
             send_telegram(msg)
             versions_memory[version] = pending
