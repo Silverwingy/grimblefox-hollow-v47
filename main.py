@@ -101,7 +101,7 @@ def check_teslafi():
     if latest_version != last_version:
         detail_url = f"https://www.teslafi.com/firmware.php?detail={latest_version}"
         msg = (
-            f"🆕 **New Build** – `{latest_version}`\n"
+            f"🆕 **New Build** – `{latest_version}`\n\n"
             f" Initial Rollout to {current_count} on [TeslaFi]({detail_url})"
         )
         send_telegram(msg)
@@ -116,8 +116,8 @@ def check_teslafi():
     elif current_count >= last_count + WAVE_THRESHOLD:
         diff = current_count - last_count
         msg = (
-            f"A new wave of `{latest_version}` is rolling out now.\n"
-            f"Initial Rollout Size: {diff}"
+            f"A new wave `{latest_version}` is rolling out now.\n\n"
+            f"Rollout Size: {diff}"
         )
         send_telegram(msg)
         
