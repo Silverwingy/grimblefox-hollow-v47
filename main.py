@@ -125,7 +125,11 @@ def scrape_tesla_shop_products():
 
         # look for links to /product/ pages and grab name + nearby price
         for a in soup.select('a[href*="/product/"]'):
-            name = a.get_text(strip=True)
+            # Tesla shop links often store the display name in aria-label,
+            # while the anchor text can be empty because the card is built
+            # with nested elements. Grab aria-label first, then fall back to
+            # any rendered text.
+            name = a.get("aria-label") or a.get_text(strip=True)
             href = a.get("href", "")
 
             if not name or not href:
@@ -147,21 +151,28 @@ def scrape_tesla_shop_products():
 
             price = None
 
-            # first try siblings after the link
-            for sib in a.next_siblings:
-                try:
-                    if isinstance(sib, NavigableString):
-                        text = str(sib).strip()
-                    else:
-                        text = sib.get_text(strip=True)
-                except Exception:
-                    continue
-
-                if not text:
-                    continue
-                if "$" in text and any(ch.isdigit() for ch in text):
-                    price = text
+            # first try to find a price within the link itself (common on Tesla shop)
+            for node in a.stripped_strings:
+                if "$" in node and any(ch.isdigit() for ch in node):
+                    price = node
                     break
+
+            # next try siblings after the link
+            if not price:
+                for sib in a.next_siblings:
+                    try:
+                        if isinstance(sib, NavigableString):
+                            text = str(sib).strip()
+                        else:
+                            text = sib.get_text(strip=True)
+                    except Exception:
+                        continue
+
+                    if not text:
+                        continue
+                    if "$" in text and any(ch.isdigit() for ch in text):
+                        price = text
+                        break
 
             # fallback: scan parent for a price string
             if not price:
