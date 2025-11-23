@@ -115,9 +115,11 @@ def check_teslafi():
     # We check if the total count increased by the threshold (e.g. 5)
     elif current_count >= last_count + WAVE_THRESHOLD:
         diff = current_count - last_count
+        detail_url = f"https://www.teslafi.com/firmware.php?detail={latest_version}"
         msg = (
             f"A new wave `{latest_version}` is rolling out now.\n\n"
-            f"Rollout Size: {diff}"
+            f"Rollout Size: {diff}\n\n"
+            f"[TeslaFi]({detail_url})"
         )
         send_telegram(msg)
         
