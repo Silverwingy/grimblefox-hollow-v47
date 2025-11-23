@@ -121,7 +121,7 @@ def check_teslafi():
             detail_url = f"https://www.teslafi.com/firmware.php?detail={version}"
             msg = (
                 f"A new wave `{version}` is rolling out now.\n\n"
-                f"Rollout Size (pending increase): {diff}\n\n"
+                f"Rollout Size: {diff}\n\n"
                 f"[TeslaFi]({detail_url})"
             )
             send_telegram(msg)
