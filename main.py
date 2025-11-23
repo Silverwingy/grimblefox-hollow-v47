@@ -51,34 +51,27 @@ def check_teslafi():
     builds = {}  # version -> pending installs
 
     for row in soup.find_all("tr"):
-        cols = row.find_all("td")
-        if not cols:
+    cols = row.find_all("td")
+    if not cols:
+        continue
+    
+    text = cols[0].get_text().strip()
+    
+    if text.startswith("20") and "." in text and len(text) < 25:
+        # skip rows that do not even have a pending column
+        if len(cols) < 4:
             continue
-        
-        text = cols[0].get_text().strip()
 
-        # DEBUG BLOCK
-        target_version = "2025.32.6"
-        if target_version in text:
-            msg = [f"Debug for {text}:"]
-            for i, c in enumerate(cols):
-                msg.append(f"{i}: {repr(c.get_text(strip=True))}")
-            msg.append("----")
-            send_telegram("\n".join(msg))
+        try:
+            # Col 3 is the pending installs  your debug showed 3: '44'
+            pending_text = cols[3].get_text().strip().replace(",", "")
+            pending = int(pending_text) if pending_text.isdigit() else 0
+        except Exception as e:
+            print(f"Error parsing columns for version {text}: {e}")
+            pending = 0
         
-        # Valid version check (Starts with '20' and has a dot, e.g., '2025.44.1')
-        if text.startswith("20") and "." in text and len(text) < 25:
-            try:
-                # Col 0: Version
-                # Col 1: Current Installs (not used for logic now)
-                # Col 2: Percent (skip)
-                # Col 3: Pending Installs (target)
-                pending_text = cols[1].get_text().strip().replace(",", "")
-                pending = int(pending_text) if pending_text.isdigit() else 0
-            except Exception as e:
-                print(f"Error parsing columns for version {text}: {e}")
-                pending = 0
-            
+        # only take the first row for each version  ignore later ones
+        if text not in builds:
             builds[text] = pending
 
     if not builds:
