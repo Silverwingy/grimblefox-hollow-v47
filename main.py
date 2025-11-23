@@ -102,7 +102,8 @@ def check_teslafi():
         if version not in versions_memory:
             detail_url = f"https://www.teslafi.com/firmware.php?detail={version}"
             msg = (
-                f"**🚨 New Build Detected**: `{version}`\n\n"
+                f"🚨 New Build Detected\n\n"
+                f"{version}`\n\n"
                 f"Initial Rollout: {pending}  \u2013 [TeslaFi]({detail_url})"
             )
             send_telegram(msg)
@@ -113,7 +114,8 @@ def check_teslafi():
             diff = pending - last_count
             detail_url = f"https://www.teslafi.com/firmware.php?detail={version}"
             msg = (
-                f"🌊 New wave for `{version}`\n\n"
+                f"🌊 New Wave Rolling Out\n\n"
+                f"{version}`\n\n"
                 f"Rollout Size: {diff}  \u2013 [TeslaFi]({detail_url})"
             )
             send_telegram(msg)
