@@ -9,7 +9,7 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36"
 }
 MEMORY_FILE = "memory.json"
-WAVE_THRESHOLD = 5  # Trigger "Wave Alert" if installs increase by 5+ in 10 mins
+WAVE_THRESHOLD = 5  # Trigger alert if new detection size is >= 5
 
 # Secrets
 bot_token = os.environ.get("TELEGRAM_TOKEN")
@@ -49,9 +49,9 @@ def check_teslafi():
     
     # --- LOGIC: Find the First Row of the Fleet Table ---
     latest_version = None
-    current_count = 0
+    current_count = 0  # This will be Pending + Installed
     
-    # We look for the first table row that has a version number
+    # Search for the table row with the latest version
     for row in soup.find_all("tr"):
         cols = row.find_all("td")
         if not cols: continue
@@ -62,14 +62,25 @@ def check_teslafi():
         if text.startswith("20") and "." in text and len(text) < 25:
             latest_version = text
             
-            # The "Count" is usually in the 2nd column (index 1)
+            # --- CRITICAL COLUMN FIX ---
+            # Col 0: Version
+            # Col 1: Current Installs (e.g., 5,295)
+            # Col 2: Percent (e.g., 56.1%)  <-- WE MUST SKIP THIS
+            # Col 3: Pending Installs (e.g., 1,434) <-- TARGET
+            
             try:
-                count_text = cols[1].get_text().strip().replace(",", "")
-                current_count = int(count_text)
-            except:
+                installed = int(cols[1].get_text().strip().replace(",", "") or 0)
+                # If col[3] is empty or invalid, assume 0
+                pending_text = cols[3].get_text().strip().replace(",", "")
+                pending = int(pending_text) if pending_text.isdigit() else 0
+                
+                # We sum them so that even if a user moves from "Pending" to "Installed", 
+                # the "Wave Size" remains accurate and doesn't shrink.
+                current_count = installed + pending
+            except Exception as e:
+                print(f"Error parsing columns: {e}")
                 current_count = 0
             
-            # We found the top row, stop searching
             break
 
     if not latest_version:
@@ -81,20 +92,19 @@ def check_teslafi():
     last_version = memory.get("last_version", "None")
     last_count = memory.get("last_count", 0)
 
-    print(f"Current: {latest_version} ({current_count} installs)")
-    print(f"Saved:   {last_version} ({last_count} installs)")
+    print(f"Current: {latest_version} (Count: {current_count})")
+    print(f"Saved:   {last_version} (Count: {last_count})")
 
     # --- DECISION TREE ---
 
     # SCENARIO 1: NEW BUILD (Version Changed)
- if latest_version != last_version:
-    detail_url = f"https://www.teslafi.com/firmware.php?detail={latest_version}"
-    msg = (
-        f"🆕 **New Build** – `{latest_version}`\n"
-        f" Initial Rollout to {current_count} on [TeslaFi]({detail_url})"
-    )
-    send_telegram(msg)
-
+    if latest_version != last_version:
+        detail_url = f"https://www.teslafi.com/firmware.php?detail={latest_version}"
+        msg = (
+            f"🆕 **New Build** – `{latest_version}`\n"
+            f" Initial Rollout to {current_count} on [TeslaFi]({detail_url})"
+        )
+        send_telegram(msg)
         
         # Save both new version and new count
         memory["last_version"] = latest_version
@@ -102,23 +112,24 @@ def check_teslafi():
         save_memory(memory)
 
     # SCENARIO 2: WAVE (Same Version, Big Jump in Count)
+    # We check if the total count increased by the threshold (e.g. 5)
     elif current_count >= last_count + WAVE_THRESHOLD:
-    diff = current_count - last_count
-    msg = (
-        f"A new wave of `{latest_version}` is rolling out now.\n"
-        f"Initial Rollout Size: {diff}"
-    )
-    send_telegram(msg)
+        diff = current_count - last_count
+        msg = (
+            f"A new wave of `{latest_version}` is rolling out now.\n"
+            f"Initial Rollout Size: {diff}"
+        )
+        send_telegram(msg)
         
-        # Update the count only
+        # Update the count so we don't alert again until the NEXT wave
         memory["last_count"] = current_count
         save_memory(memory)
 
     else:
         print("No significant change.")
-        # (Optional) Update count silently so we track small increments?
-        # memory["last_count"] = current_count
-        # save_memory(memory)
+        # Optional: Save small increments silently to keep memory accurate
+        memory["last_count"] = current_count
+        save_memory(memory)
 
 if __name__ == "__main__":
     check_teslafi()
